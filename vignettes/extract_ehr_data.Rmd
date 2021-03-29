@@ -1,0 +1,416 @@
+---
+title: "Code to extract electronic health record (EHR) data from relational databases for Drug-Drug Interaction Wide Association Studies (DDIWAS)"
+author: "Patrick Wu"
+date: "10/17/2020"
+output: 
+  html_document:
+    theme: paper
+vignette: >
+  %\VignetteIndexEntry{Code to extract electronic health record (EHR) data from relational databases for Drug-Drug Interaction Wide Association Studies (DDIWAS)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, include=FALSE}
+library(tidyverse)
+```
+## Description
+To use the output CSV files from this example document, see [vignette](https://pwatrick.github.io/ddiwas/articles/ddiwas_r_package_tutorial.html) on using the DDIWAS R package.  
+
+* This document provides example code to extract electronic health record (EHR) data organized using the [OHDSI/OMOP Common Data Model](http://archive.today/2020.10.14-102308/https://ohdsi.github.io/TheBookOfOhdsi/CommonDataModel.html).  
+* There may be some institution-specific data dependencies that require minor modifications if you use the code outside of the Synthetic Derivative at Vanderbilt University Medical Center. For example, allergy list data (see `ddi2` table) may be located not in the `NOTE` table, but rather the `NOTE_NLP` table. See [discussion](http://archive.today/2020.10.03-114046/https://github.com/OHDSI/CommonDataModel/issues/85) on `NOTE_NLP` tables.  
+* The code is written to extract data from a IBM Netezza relational database.  
+* Please submit questions/comments/feedback to wei-qi.wei(AT)vumc.org.  
+
+## Extract EHR data to identify `simvastatin` drug interactions using DDIWAS.  
+### Identify patients exposed to `simvastatin` using generic and brand names. 
+```{sql,eval = FALSE}
+create table ddi1 as 
+(select t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id
+from (select * from drug_exposure) t1
+where lower(t1.drug_source_value) like '%simvastatin%'
+group by t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id)
+union
+(select t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id
+from (select * from drug_exposure) t1
+where lower(t1.drug_source_value) like '%zocor%'
+group by t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id)
+union
+(select t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id
+from (select * from drug_exposure) t1
+where lower(t1.drug_source_value) like '%flolipid%'
+group by t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id)
+union
+(select t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id
+from (select * from drug_exposure) t1
+where lower(t1.drug_source_value) like '%vytorin%'
+group by t1.drug_exposure_id, t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_source_concept_id);
+```
+  
+Example `ddi1` table
+```{r echo=FALSE}
+ddi1_df <- dplyr::tribble(
+  ~DRUG_EXPOSURE_ID, ~PERSON_ID, ~DRUG_EXPOSURE_START_DATE, ~DRUG_SOURCE_VALUE, ~DRUG_SOURCE_CONCEPT_ID,
+  1, 1, '2010-03-21', 'Zocor', 1539406,
+  2, 1, '2011-03-17', 'Zocor', 1539406, 
+  3, 1, '2011-10-28', 'Zocor', 1539406,
+  4, 2, '2012-06-24', 'Simvastatin', 1539411, 
+  5, 2, '2013-04-13', 'Simvastatin', 1539411, 
+)
+
+DT::datatable(ddi1_df, options = list(scrollX = TRUE))
+```
+
+### Define observation period
+Identify patients with `simvastatin` listed in their allergy list  
+```{sql,eval = FALSE}
+create table ddi2 as
+(select t1.person_id, t1.note_date, t1.note_text, t1.note_source_value
+from (select * from note) t1
+where lower(note_source_value) like '%allerg%'
+  and lower(note_text) like '%simvastatin%')
+union
+(select t1.person_id, t1.note_date, t1.note_text, t1.note_source_value
+from (select * from note) t1
+where lower(note_source_value) like '%allerg%'
+  and lower(note_text) like '%zocor%')
+union
+(select t1.person_id, t1.note_date, t1.note_text, t1.note_source_value
+from (select * from note) t1
+where lower(note_source_value) like '%allerg%'
+  and lower(note_text) like '%flolipid%')
+union
+(select t1.person_id, t1.note_date, t1.note_text, t1.note_source_value
+from (select * from note) t1
+where lower(note_source_value) like '%allerg%'
+  and lower(note_text) like '%vytorin%');
+```
+  
+Example `ddi2` table
+```{r echo=FALSE}
+ddi2_df <- dplyr::tribble(
+  ~PERSON_ID, ~NOTE_DATE, ~NOTE_TEXT, ~NOTE_SOURCE_VALUE,
+  1, '2011-10-28', 'Zocor (muscle cramps)', 'ALLERGIES',
+  1, '2012-03-07', 'Zocor (muscle cramps)', 'ALLERGIES'
+)
+
+DT::datatable(ddi2_df, options = list(scrollX = TRUE))
+```
+
+For each patient in `ddi2`, get first date that simvastatin was listed in their allergy list
+```{sql, eval = FALSE}
+create table ddi3 as
+select t1.person_id, min(t1.note_date) as case_end_date
+from (select * from ddi2) t1
+group by t1.person_id;
+```
+  
+Example `ddi3` table
+```{r echo=FALSE}
+ddi3_df <- dplyr::tribble(
+  ~PERSON_ID, ~CASE_END_DATE,
+  1, '2011-10-28'
+)
+
+DT::datatable(ddi3_df, options = list(scrollX = TRUE))
+```
+
+For each patient in `ddi1`, get first date of simvastatin exposure
+```{sql, eval = FALSE}
+create table ddi4 as 
+select t1.person_id, min(t1.drug_exposure_start_date) as first_date_simvastatin_exposure
+from (select * from ddi1) t1
+group by t1.person_id;
+```
+  
+Example `ddi4` table
+```{r echo=FALSE}
+ddi4_df <- dplyr::tribble(
+  ~PERSON_ID, ~FIRST_DATE_SIMVASTATIN_EXPOSURE,
+  1, '2010-03-21', 
+  2, '2012-06-24'
+)
+
+DT::datatable(ddi4_df, options = list(scrollX = TRUE))
+```
+
+For each patient in `ddi1`, get last date of simvastatin exposure
+```{sql, eval = FALSE}
+create table ddi5 as 
+select t1.person_id, max(t1.drug_exposure_start_date) as last_date_simvastatin_exposure
+from (select * from ddi1) t1
+group by t1.person_id;
+```
+  
+Example `ddi5` table
+```{r echo=FALSE}
+ddi5_df <- dplyr::tribble(
+  ~PERSON_ID, ~LAST_DATE_SIMVASTATIN_EXPOSURE,
+  1, '2011-10-28',
+  2, '2013-04-13'
+)
+
+DT::datatable(ddi5_df, options = list(scrollX = TRUE))
+```
+
+Combine tables `ddi4` and `ddi5` to get first and last dates of simvastatin exposure in one table
+```{sql, eval = FALSE}
+create table ddi6 as 
+select t1.person_id, t1.first_date_simvastatin_exposure, t2.last_date_simvastatin_exposure
+from (select * from ddi4) t1, (select * from ddi5) t2
+where t1.person_id = t2.person_id
+group by t1.person_id, t1.first_date_simvastatin_exposure, t2.last_date_simvastatin_exposure;
+```
+  
+Example `ddi6` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~FIRST_DATE_SIMVASTATIN_EXPOSURE, ~LAST_DATE_SIMVASTATIN_EXPOSURE,
+  1, '2010-03-21', '2011-10-28',
+  2, '2012-06-24', '2013-04-13'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+
+Join `ddi6` and `ddi3` tables; label cases and controls
+```{sql, eval = FALSE}
+create table ddi7 as 
+select t1.person_id, t1.first_date_simvastatin_exposure, t1.last_date_simvastatin_exposure, t2.case_end_date
+from (select * from ddi6) t1
+left join ddi3 t2 on t1.person_id = t2.person_id
+group by t1.person_id, t1.first_date_simvastatin_exposure, t1.last_date_simvastatin_exposure, t2.case_end_date;
+
+--Label cases and controls
+alter table ddi7
+add column group_label int;
+
+update ddi7
+set group_label = 1
+where case_end_date is not null;
+
+update ddi7
+set group_label = 0
+where case_end_date is null;
+```
+  
+Example `ddi7` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~FIRST_DATE_SIMVASTATIN_EXPOSURE, ~LAST_DATE_SIMVASTATIN_EXPOSURE, ~CASE_END_DATE, ~GROUP_LABEL,
+  1, '2010-03-21', '2011-10-28', '2011-10-28', 1,
+  2, '2012-06-24', '2013-04-13', '<null>', 0
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Calculate 12 months after `first_date_simvastatin_exposure`; calculate 12 months before `case_end_date`
+```{sql, eval = FALSE}
+create table ddi8 as
+select t1.person_id, t1.group_label, t1.first_date_simvastatin_exposure, t1.last_date_simvastatin_exposure, t1.case_end_date, add_months(t1.first_date_simvastatin_exposure, 12) as twelve_months_post_exposure
+from (select * from ddi7) t1
+group by t1.person_id, t1.group_label, t1.first_date_simvastatin_exposure, t1.last_date_simvastatin_exposure, t1.case_end_date, twelve_months_post_exposure;
+
+alter table ddi8
+add column twelve_months_prior_adr date; 
+
+update ddi8 
+set twelve_months_prior_adr = add_months(case_end_date, -12)
+where case_end_date is not null;
+```
+  
+Example `ddi8` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~GROUP_LABEL, ~FIRST_DATE_SIMVASTATIN_EXPOSURE, ~LAST_DATE_SIMVASTATIN_EXPOSURE, ~CASE_END_DATE, ~TWELVE_MONTHS_POST_EXPOSURE, ~TWELVE_MONTHS_PRIOR_ADR,
+  1, 1, '2010-03-21', '2011-10-28', '2011-10-28', '2011-03-21', '2010-10-28', 
+  2, 0, '2012-06-24', '2013-04-13', '<null>', '2013-06-24', '<null>'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Define observation period for controls
+```{sql, eval = FALSE}
+create table ddi9 as 
+select t1.person_id, t1.group_label, t1.first_date_simvastatin_exposure as start_date, t1.last_date_simvastatin_exposure, t1.twelve_months_post_exposure
+from (select * from ddi8 where group_label = 0) t1
+group by t1.person_id, t1.group_label, t1.first_date_simvastatin_exposure, t1.last_date_simvastatin_exposure, t1.twelve_months_post_exposure;
+
+alter table ddi9
+add column end_date date; 
+
+update ddi9
+set end_date = twelve_months_post_exposure
+where last_date_simvastatin_exposure > twelve_months_post_exposure;
+
+update ddi9
+set end_date = last_date_simvastatin_exposure
+where end_date is null;
+```
+  
+Example `ddi9` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~GROUP_LABEL, ~START_DATE, ~LAST_DATE_SIMVASTATIN_EXPOSURE, ~TWELVE_MONTHS_POST_EXPOSURE, ~END_DATE,
+  2, 0, '2012-06-24', '2013-04-13', '2013-06-24', '2013-04-13'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Define observation period for cases
+```{sql, eval = FALSE}
+create table ddi10 as
+select t1.person_id, t1.group_label, t1.first_date_simvastatin_exposure, t1.case_end_date as end_date, t1.twelve_months_prior_adr
+from (select * from ddi8 where group_label = 1) t1
+group by t1.person_id, t1.group_label, t1.first_date_simvastatin_exposure, end_date, t1.twelve_months_prior_adr;
+
+alter table ddi10 
+add column start_date date; 
+
+update ddi10
+set start_date = twelve_months_prior_adr 
+where first_date_simvastatin_exposure < twelve_months_prior_adr;
+
+update ddi10 
+set start_date = first_date_simvastatin_exposure
+where start_date is null;
+```
+  
+Example `ddi10` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~GROUP_LABEL, ~FIRST_DATE_SIMVASTATIN_EXPOSURE, ~END_DATE, ~TWELVE_MONTHS_PRIOR_ADR, ~START_DATE,
+  1, 1, '2010-03-21', '2011-10-28', '2010-10-28', '2010-10-28' 
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Merge cases and controls observation period tables
+```{sql, eval = FALSE}
+create table ddi11 as
+(select t1.person_id, t1.group_label, t1.start_date, t1.end_date
+from (select * from ddi9) t1
+group by t1.person_id, t1.group_label, t1.start_date, t1.end_date)
+union 
+(select t1.person_id, t1.group_label, t1.start_date, t1.end_date
+from (select * from ddi10) t1
+group by t1.person_id, t1.group_label, t1.start_date, t1.end_date);
+```
+
+Example `ddi11` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~GROUP_LABEL, ~START_DATE, ~END_DATE, 
+  1, 1, '2010-10-28', '2011-10-28', 
+  2, 0, '2012-06-24', '2013-04-13' 
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+
+### Obtain all drugs listed in allergy list for patients in `ddi11` before and on `end_date`
+```{sql, eval = FALSE}
+create table ddi12 as
+select t1.person_id, t1.note_text, min(t1.note_date) as first_adr_date
+from (select * from note) t1, (select * from ddi11) t2
+where t1.person_id in (t2.person_id)
+and lower(note_source_value) like '%allerg%'
+group by t1.person_id, t1.note_text; 
+
+create table ddi13 as 
+select t1.person_id, t1.note_text, t1.first_adr_date, t2.start_date, t2.end_date
+from (select * from ddi12) t1 
+left join ddi11 t2 on (t1.person_id = t2.person_id)
+group by t1.person_id, t1.note_text, t1.first_adr_date, t2.start_date, t2.end_date;
+
+create table ddi14 as 
+select t1.person_id, t1.note_text, t1.first_adr_date, t1.start_date, t1.end_date
+from (select * from ddi13) t1
+where t1.first_adr_date <= t1.end_date
+group by t1.person_id, t1.note_text, t1.first_adr_date, t1.start_date, t1.end_date;
+```
+  
+Example `ddi14` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~NOTE_TEXT, ~FIRST_ADR_DATE, ~START_DATE, ~END_DATE,
+  1, 'gemfibrozil', '2011-09-01', '2010-10-28', '2011-10-28',
+  2, 'No known allergies', '2012-09-15', '2012-06-24', '2013-04-13'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+### Obtain outpatient drug exposures for patients in `ddi11` during observation period
+```{sql, eval = FALSE}
+create table ddi15 as 
+select t1.person_id, t1.drug_exposure_start_date as date, t1.drug_source_value, t1.drug_concept_id
+from (select * from drug_exposure) t1, (select * from ddi11) t2
+where t1.person_id in (t2.person_id)
+and t1.drug_exposure_start_date >= t2.start_date
+and t1.drug_exposure_start_date <= t2.end_date
+group by t1.person_id, t1.drug_exposure_start_date, t1.drug_source_value, t1.drug_concept_id;
+
+create table ddi16 as 
+select t1.person_id, t2.visit_start_date as outpatient_visit_date, t1.drug_source_value, t1.drug_concept_id
+from (select * from ddi15) t1, (select person_id, visit_start_date from visit_occurrence where visit_concept_id = 9202) t2
+where t1.person_id = t2.person_id
+and t1.date = t2.visit_start_date
+group by t1.person_id, t2.visit_start_date, t1.drug_source_value, t1.drug_concept_id;
+
+--collapse `ddi16` to earliest date
+create table ddi17 as
+select t1.person_id, t1.drug_concept_id
+from (select * from ddi16) t1
+group by t1.person_id, t1.drug_concept_id;
+```
+
+Example `ddi17` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~DRUG_CONCEPT_ID,
+  1, 1308877, 
+  2, 43014173
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+
+### Obtain covariates for patients in `ddi11`
+```{sql, eval = FALSE}
+create table ddi18 as
+select t1.person_id, t1.group_label, t1.start_date, t1.end_date, t2.gender_source_value as gender, date(t2.birth_datetime) as dob, t2.race_source_value as race
+from (select * from ddi11) t1, (select * from person) t2
+where t1.person_id = t2.person_id
+group by t1.person_id, t1.group_label, t1.start_date, t1.end_date, gender, dob, race;
+```
+  
+Example `ddi18` table
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~GROUP_LABEL, ~START_DATE, ~END_DATE, ~GENDER, ~DOB, ~RACE,
+  1, 1, as.Date('2010-10-28'), as.Date('2011-10-28'), 'F', as.Date('1950-05-06'), 'W', 
+  2, 0, as.Date('2012-06-24'), as.Date('2013-04-13'), 'M', as.Date('1965-12-12'), 'W'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+### Download tables as CSV file for downstream processing and analysis in R
+  
+Download `ddi14` as CSV file `ddi_adr_data.csv`  
+```{sql, eval = FALSE}
+select * from ddi14;
+```
+  
+Download `ddi17` as CSV file `ddi_drug_exposures.csv`
+```{sql, eval = FALSE}
+select * from ddi17;
+```
+  
+Download `ddi18` as CSV file `ddi_covariates.csv`
+```{sql, eval = FALSE}
+select * from ddi18;
+```

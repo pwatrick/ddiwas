@@ -1,0 +1,207 @@
+---
+title: "DDIWAS R package tutorial"
+author: "Patrick Wu"
+date: "10/17/2020"
+output: 
+  html_document:
+    theme: paper
+vignette: >
+  %\VignetteIndexEntry{DDIWAS R package tutorial}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Description
+CSV files in this tutorial come from the [vignette](https://pwatrick.github.io/ddiwas/articles/extract_ehr_data.html) on how to extract EHR data for DDIWAS.  
+
+* This tutorial shows how to process and analyze electronic health record (EHR) data extracted from a relational database organized using the [OHDSI/OMOP Common Data Model](http://archive.today/2020.10.14-102308/https://ohdsi.github.io/TheBookOfOhdsi/CommonDataModel.html).  
+* Please submit questions/comments/feedback to wei-qi.wei(AT)vumc.org.  
+  
+## Import packages
+Load required packages
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse);
+  library(broom); 
+  library(ddiwas); 
+  library(glue); 
+  library(lubridate)})
+set.seed(1)
+```
+  
+## Map drug allergies
+```{r, eval = FALSE}
+ehr_drug_allergies <- read_csv("ddi_adr_data.csv", col_types = cols())
+names(ehr_drug_allergies) <- tolower(names(ehr_drug_allergies))
+drug_allergies <- ddiwas::map_drug_allergies(ehr_drug_allergies = ehr_drug_allergies)
+```
+  
+Example **input** `ddi_adr_data.csv` dataframe  
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~NOTE_TEXT, ~FIRST_ADR_DATE, ~START_DATE, ~END_DATE,
+  1, 'gemfibrozil', '2011-09-01', '2010-10-28', '2011-10-28',
+  2, 'No known allergies', '2012-09-15', '2012-06-24', '2013-04-13'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Example **output** `drug_allergies` dataframe  
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~drug_allergy,
+  1, "gemfibrozil"
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+## Process covariates
+```{r, eval = FALSE}
+df_drug_exposures <- read_csv("ddi_drug_exposures.csv", col_types = cols())
+names(df_drug_exposures) <- c("person_id", "concept_id")
+
+covariates <- read_csv("ddi_covariates.csv", col_types = cols())
+names(covariates) <- tolower(names(covariates))
+covariates <- ddiwas::process_covariates(covariates, df_drug_exposures)
+```
+  
+Example **input** dataframes  
+
+* `ddi_drug_exposures.csv`  
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~DRUG_CONCEPT_ID,
+  1, 1308877, 
+  2, 43014173
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+* `ddi_covariates.csv`  
+```{r echo=FALSE}
+tribble(
+  ~PERSON_ID, ~GROUP_LABEL, ~START_DATE, ~END_DATE, ~GENDER, ~DOB, ~RACE,
+  1, 1, as.Date('2010-10-28'), as.Date('2011-10-28'), 'F', as.Date('1950-05-06'), 'W', 
+  2, 0, as.Date('2012-06-24'), as.Date('2013-04-13'), 'M', as.Date('1965-12-12'), 'W'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Example **output** `covariates` dataframe
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~group_label, ~start_date, ~end_date, ~gender, ~dob, ~race, ~age, ~obs_length, ~num_drug_exposures, ~age_n, ~obs_length_n, ~num_drug_exposures_n, ~is_m, ~is_w,
+  1, 1, as.Date('2010-10-28'), as.Date('2011-10-28'), 'F', as.Date('1950-05-06'), 'W', 60.5, 365, 9, 0.590, 0.997, 0.0552, 0, 1,
+  2, 0, as.Date('2012-06-24'), as.Date('2013-04-13'), 'M', as.Date('1965-12-12'), 'W', 46.5, 293, 12, 0.396, 0.801, 0.0759, 1, 1
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+## Require allergy list entry during observation period
+```{r, eval = FALSE}
+covariates <- ddiwas::require_drug_allergies(ehr_drug_allergies, covariates)
+```
+  
+Example **input** dataframes  
+
+* `ehr_drug_allergies`  
+```{r echo=FALSE}
+tribble(
+  ~person_id, ~note_text, ~first_adr_date, ~start_date, ~end_date,
+  1, 'gemfibrozil', '2011-09-01', '2010-10-28', '2011-10-28',
+  2, 'No known allergies', '2012-09-15', '2012-06-24', '2013-04-13'
+) %>% 
+  DT::datatable(options = list(scrollX = TRUE))
+```
+
+* `covariates`  
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~group_label, ~start_date, ~end_date, ~gender, ~dob, ~race, ~age, ~obs_length, ~num_drug_exposures, ~age_n, ~obs_length_n, ~num_drug_exposures_n, ~is_m, ~is_w,
+  1, 1, as.Date('2010-10-28'), as.Date('2011-10-28'), 'F', as.Date('1950-05-06'), 'W', 60.5, 365, 9, 0.590, 0.997, 0.0552, 0, 1,
+  2, 0, as.Date('2012-06-24'), as.Date('2013-04-13'), 'M', as.Date('1965-12-12'), 'W', 46.5, 293, 12, 0.396, 0.801, 0.0759, 1, 1
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Example **output** `covariates` dataframe after requiring allergy list entry
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~is_m, ~is_w, ~age_n, ~obs_length_n, ~num_drug_exposures_n, ~group_label,
+  1, 0, 1, 0.590, 0.997, 0.0552, 1, 
+  2, 1, 1, 0.396, 0.801, 0.0759, 0
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+## Create regression table
+```{r, eval = FALSE}
+regression_table <- ddiwas::create_regression_table(drug_allergies, covariates)
+```
+  
+Example **input** dataframes.  
+
+* `drug_allergies`  
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~drug_allergy,
+  1, "gemfibrozil"
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+
+* `covariates`  
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~is_m, ~is_w, ~age_n, ~obs_length_n, ~num_drug_exposures_n, ~group_label,
+  1, 0, 1, 0.590, 0.997, 0.0552, 1, 
+  2, 1, 1, 0.396, 0.801, 0.0759, 0
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+
+Example **output** `regression_table` dataframe
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~is_m, ~is_w, ~age_n, ~obs_length_n, ~num_drug_exposures_n, ~group_label, ~gemfibrozil, ~lisinopril, 
+  1, 0, 1, 0.590, 0.997, 0.0552, 1, 1, 0, 
+  2, 1, 1, 0.396, 0.801, 0.0759, 0, 0, 0
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+## Run regression
+```{r, eval = FALSE}
+results <- ddiwas::ddiwas_regression(regression_table, rare_events = TRUE)
+```
+  
+### Add `object_drug` column. Rearrange and rename columns.  
+```{r, eval = FALSE}
+results$object_drug <- "simvastatin"
+results <- results %>% 
+  select(object_drug, drug, coef, se, pval, or, nA, nB, nC, nD)
+names(results) <- c("object_drug", "potential_precipitant_drug", "coef", "se", "pval", "or", "nA", "nB", "nC", "nD") 
+```
+
+Example **input** `regression_table` dataframe.  
+```{r echo=FALSE}
+dplyr::tribble(
+  ~person_id, ~is_m, ~is_w, ~age_n, ~obs_length_n, ~num_drug_exposures_n, ~group_label, ~gemfibrozil, ~lisinopril, 
+  1, 0, 1, 0.590, 0.997, 0.0552, 1, 1, 0, 
+  2, 1, 1, 0.396, 0.801, 0.0759, 0, 0, 0
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+Example **output** `results` dataframe.  
+```{r echo=FALSE}
+dplyr::tribble(
+  ~object_drug, ~potential_precipitant_drug, ~coef, ~se, ~pval, ~or, ~nA, ~nB, ~nC, ~nD,
+  "simvastatin", "gemfibrozil", 1.98, 0.32, 1.14E-09, 7.21, 12, 49, 2802, 85824,
+  "simvastatin", "lisinopril", 0.66, 0.14, 2.21E-06, 1.93, 57, 853, 2757, 85020
+) %>% DT::datatable(options = list(scrollX = TRUE))
+```
+  
+## Packages used to create document
+```{r}
+sessionInfo()
+```
