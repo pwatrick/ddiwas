@@ -38,4 +38,4 @@ This package is ready for use.
 
 Citation
 ===========
-Wu P, Nelson SD, Zhao J, et al. DDIWAS: High-throughput electronic health record-based screening of drug-drug interactions. J Am Med Inform Assoc Published Online First: 13 March 2021. doi:10.1093/jamia/ocab019  
+Patrick Wu, Scott D Nelson, Juan Zhao, Cosby A Stone Jr, QiPing Feng, Qingxia Chen, Eric A Larson, Bingshan Li, Nancy J Cox, C Michael Stein, Elizabeth J Phillips, Dan M Roden, Joshua C Denny, Wei-Qi Wei, DDIWAS: High-throughput electronic health record-based screening of drug-drug interactions, Journal of the American Medical Informatics Association, Volume 28, Issue 7, July 2021, Pages 1421–1430, https://doi.org/10.1093/jamia/ocab019
